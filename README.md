@@ -1,3 +1,5 @@
+Repo link : https://github.com/Manojk246/KHD-task.git
+
 🛒 Wholesale Customers Clustering App
 
 An interactive Gradio-based web application for exploring clustering algorithms on the Wholesale Customers dataset.
