@@ -4,10 +4,13 @@ import numpy as np
 import matplotlib.pyplot as plt
 from sklearn.cluster import KMeans, AgglomerativeClustering, DBSCAN
 from sklearn.preprocessing import StandardScaler
-from sklearn.metrics.pairwise import euclidean_distances, pairwise_distances_argmin_min
-from sklearn.metrics import silhouette_score
+from sklearn.metrics import silhouette_score, davies_bouldin_score, calinski_harabasz_score
 from sklearn.decomposition import PCA
+from sklearn.metrics.pairwise import euclidean_distances, pairwise_distances_argmin_min
 
+# ==========================
+# Load and preprocess dataset
+# ==========================
 data = pd.read_csv("Wholesale customers data.csv")
 
 num_cols = data.select_dtypes(include=['float64', 'int64']).columns
@@ -16,20 +19,29 @@ X = data[num_cols].values
 scaler = StandardScaler()
 X_scaled = scaler.fit_transform(X)
 
-dbscan_model = DBSCAN(eps=1.5, min_samples=5).fit(X_scaled)
+# ==========================
+# Fit PCA globally (for consistent visualization)
+# ==========================
+pca = PCA(n_components=2)
+X_pca = pca.fit_transform(X_scaled)
 
+
+# ==========================
+# Prediction function
+# ==========================
 def predict_cluster(algorithm, k_value, *features):
     input_scaled = scaler.transform([features])
+    new_point = pca.transform(input_scaled)  # use global PCA
+    labels, cluster, title = None, None, ""
 
     if algorithm == "KMeans":
-        model = KMeans(n_clusters=int(k_value), random_state=42).fit(X_scaled)
-        cluster = model.predict(input_scaled)[0]
+        model = KMeans(n_clusters=int(k_value), random_state=42, n_init=10).fit(X_scaled)
         labels = model.labels_
+        cluster = model.predict(input_scaled)[0]
         title = f"KMeans (k={k_value})"
-        score = silhouette_score(X_scaled, labels) if len(set(labels)) > 1 else None
 
     elif algorithm == "Hierarchical":
-        model = AgglomerativeClustering(n_clusters=int(k_value))
+        model = AgglomerativeClustering(n_clusters=int(k_value), linkage="ward")
         labels = model.fit_predict(X_scaled)
 
         centroids = []
@@ -40,12 +52,12 @@ def predict_cluster(algorithm, k_value, *features):
 
         cluster = pairwise_distances_argmin_min(input_scaled, centroids)[0][0]
         title = f"Hierarchical (k={k_value})"
-        score = silhouette_score(X_scaled, labels) if len(set(labels)) > 1 else None
 
     elif algorithm == "DBSCAN":
-        labels = dbscan_model.labels_
-        clusters = set(labels) - {-1}
+        model = DBSCAN(eps=1.5, min_samples=5).fit(X_scaled)
+        labels = model.labels_
 
+        clusters = set(labels) - {-1}
         if not clusters:
             return "⚠ DBSCAN found no clusters.", None
 
@@ -57,30 +69,63 @@ def predict_cluster(algorithm, k_value, *features):
             return "🚨 OUTLIER: DBSCAN labeled everything as noise", None
 
         title = "DBSCAN"
-        score = silhouette_score(X_scaled, labels) if len(set(labels)) > 1 and -1 not in set(labels) else None
 
-    pca = PCA(n_components=2)
-    X_pca = pca.fit_transform(X_scaled)
-    new_point = pca.transform(input_scaled)
+    # ==========================
+    # Scores
+    # ==========================
+    score_text = ""
+    if labels is not None and len(set(labels)) > 1:
+        try:
+            sil = silhouette_score(X_scaled, labels)
+            db = davies_bouldin_score(X_scaled, labels)
+            ch = calinski_harabasz_score(X_scaled, labels)
+            score_text = f"\n📊 Silhouette Score = {sil:.4f}\n📊 Davies-Bouldin Score = {db:.4f}\n📊 Calinski-Harabasz Score = {ch:.4f}"
+        except Exception:
+            score_text = "\n⚠ Could not compute scores."
 
+    # ==========================
+    # Visualization (global PCA)
+    # ==========================
     plt.figure(figsize=(6, 5))
-    plt.scatter(X_pca[:, 0], X_pca[:, 1], c=labels, cmap="tab10", alpha=0.6)
+    cmap = plt.cm.get_cmap("tab10", len(set(labels)))
+
+    if algorithm == "DBSCAN":
+        plt.scatter(X_pca[labels == -1, 0], X_pca[labels == -1, 1],
+                    c="lightgray", marker="o", alpha=0.5, label="Noise")
+        for cid in set(labels):
+            if cid != -1:
+                plt.scatter(X_pca[labels == cid, 0], X_pca[labels == cid, 1],
+                            c=[cmap(cid)], label=f"Cluster {cid}", alpha=0.7)
+    else:
+        plt.scatter(X_pca[:, 0], X_pca[:, 1], c=labels, cmap="tab10", alpha=0.6)
+
     plt.scatter(new_point[:, 0], new_point[:, 1], c="red", marker="*", s=200,
                 edgecolors="black", label="New Sample")
     plt.title(f"{title} — New sample → Cluster {cluster}")
+    plt.xlabel("Principal Component 1")
+    plt.ylabel("Principal Component 2")
     plt.legend()
 
-    result_text = f"✅ Belongs to Cluster {cluster} ({title})"
-    if score:
-        result_text += f"\n📊 Silhouette Score = {score:.4f}"
+    # ==========================
+    # Result text
+    # ==========================
+    result_text = f"✅ Belongs to Cluster {cluster} ({title})" + score_text
     return result_text, plt
 
+
+# ==========================
+# Login function
+# ==========================
 def login(username, password):
     if username == "admin" and password == "1234":
         return gr.update(visible=False), gr.update(visible=True)
     else:
         return gr.update(value="❌ Invalid login. Try again."), gr.update(visible=False)
 
+
+# ==========================
+# Gradio UI
+# ==========================
 with gr.Blocks() as demo:
     with gr.Row(visible=True) as login_page:
         with gr.Column():
